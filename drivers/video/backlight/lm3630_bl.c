@@ -50,7 +50,10 @@
 /* OPPO 2013-10-24 yxq Add end */
 #define INT_DEBOUNCE_MSEC	10
 
-#define DISABLE_PWM_MODE 1
+#ifdef CONFIG_MACH_OPPO
+/* liuyan@Onlinerd.driver, 2015/03/26  Add for fix low brightness flicker */
+#define FILTER_STR 0x50
+#endif /*CONFIG_MACH_OPPO*/
 
 static struct lm3630_chip_data *lm3630_pchip;
 
@@ -69,10 +72,6 @@ struct lm3630_chip_data {
 static int pre_brightness=0;
 #endif
 
-#if DISABLE_PWM_MODE
-static bool pwm_mode_off;
-#endif
-
 /* initialize chip */
 static int lm3630_chip_init(struct lm3630_chip_data *pchip)
 {
@@ -80,6 +79,10 @@ static int lm3630_chip_init(struct lm3630_chip_data *pchip)
 	unsigned int reg_val;
 	struct lm3630_platform_data *pdata = pchip->pdata;
 
+#ifdef CONFIG_MACH_OPPO
+/* liuyan@Onlinerd.driver, 2015/03/26  Add for low brightness filcker */
+	ret = regmap_update_bits(pchip->regmap, FILTER_STR, 0x03, 0x03);
+#endif /*CONFIG_MACH_OPPO*/
 	/*pwm control */
 	reg_val = ((pdata->pwm_active & 0x01) << 2) | (pdata->pwm_ctrl & 0x03);
 	ret = regmap_update_bits(pchip->regmap, REG_CONFIG, 0x07, reg_val);
@@ -256,14 +259,6 @@ static int lm3630_intr_config(struct lm3630_chip_data *pchip)
 #endif /* CONFIG_MACH_OPPO */
 		if (ret < 0)
 			goto out;
-
-#if DISABLE_PWM_MODE
-	if (!pwm_mode_off) {
-		pwm_mode_off = true;
-		regmap_update_bits(pchip->regmap, REG_CONFIG, 0x01, 0x00);
-	}
-#endif
-
 	return bl_level;
 out:
 	dev_err(pchip->dev, "i2c failed to access REG_CTRL\n");
@@ -384,7 +379,7 @@ static ssize_t ftmbacklight_store(struct device *dev,
 
     return count;
 }
-    DEVICE_ATTR(ftmbacklight, 0644, NULL, ftmbacklight_store);
+    DEVICE_ATTR(ftmbacklight, 0200, NULL, ftmbacklight_store);
 /* OPPO zhanglong add 2013-08-30 for ftm test LCD backlight end */
 #endif //CONFIG_MACH_OPPO
 
@@ -488,6 +483,9 @@ static int lm3630_probe(struct i2c_client *client,
 /* OPPO zhanglong add 2013-08-30 for ftm test LCD backlight end */
 #endif //CONFIG_MACH_OPPO
 
+	/* Always enable PWM mode */
+	regmap_update_bits(lm3630_pchip->regmap, REG_CONFIG, 0x01, 0x01);
+
 	return 0;
 
 err_chip_init:
@@ -558,7 +556,7 @@ static int lm3630_resume(struct device *dev)
 
 	pr_debug("%s: backlight resume.\n", __func__);
     rc = regmap_write(lm3630_pchip->regmap, REG_BRT_A, 0);
-	regmap_update_bits(lm3630_pchip->regmap, REG_CONFIG, 0x40, 0x00);
+	regmap_update_bits(lm3630_pchip->regmap, REG_CONFIG, 0x04, 0x00);
 	rc  = regmap_update_bits(lm3630_pchip->regmap, REG_CTRL, 0x80, 0x00);
 	if (rc  < 0)
 	{
@@ -612,3 +610,4 @@ MODULE_DESCRIPTION("Texas Instruments Backlight driver for LM3630");
 MODULE_AUTHOR("G.Shark Jeong <gshark.jeong@gmail.com>");
 MODULE_AUTHOR("Daniel Jeong <daniel.jeong@ti.com>");
 MODULE_LICENSE("GPL v2");
+
