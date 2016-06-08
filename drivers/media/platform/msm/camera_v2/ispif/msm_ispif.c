@@ -1,4 +1,4 @@
-/* Copyright (c) 2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -117,7 +117,7 @@ static int msm_ispif_reset_hw(struct ispif_device *ispif)
 		msm_camera_io_w(ISPIF_RST_CMD_1_MASK,
 					ispif->base + ISPIF_RST_CMD_1_ADDR);
 
-	timeout = wait_for_completion_interruptible_timeout(
+	timeout = wait_for_completion_timeout(
 			&ispif->reset_complete[VFE0], msecs_to_jiffies(500));
 	CDBG("%s: VFE0 done\n", __func__);
 	if (timeout <= 0) {
@@ -129,7 +129,7 @@ static int msm_ispif_reset_hw(struct ispif_device *ispif)
 	}
 
 	if (ispif->hw_num_isps > 1) {
-		timeout = wait_for_completion_interruptible_timeout(
+		timeout = wait_for_completion_timeout(
 				&ispif->reset_complete[VFE1],
 				msecs_to_jiffies(500));
 		CDBG("%s: VFE1 done\n", __func__);
@@ -965,7 +965,11 @@ end:
 static void msm_ispif_release(struct ispif_device *ispif)
 {
 	BUG_ON(!ispif);
-	BUG_ON(!ispif->base);
+
+	if (!ispif->base) {
+		pr_err("%s: ispif base is NULL\n", __func__);
+		return;
+	}
 
 	if (ispif->ispif_state != ISPIF_POWER_UP) {
 		pr_err("%s: ispif invalid state %d\n", __func__,
@@ -1046,7 +1050,8 @@ static long msm_ispif_subdev_ioctl(struct v4l2_subdev *sd,
 	case MSM_SD_SHUTDOWN: {
 		struct ispif_device *ispif =
 			(struct ispif_device *)v4l2_get_subdevdata(sd);
-		msm_ispif_release(ispif);
+		if (ispif && ispif->base)
+			msm_ispif_release(ispif);
 		return 0;
 	}
 	default:
