@@ -2461,13 +2461,12 @@ static int synaptics_rmi4_int_enable(struct synaptics_rmi4_data *rmi4_data,
  * and calls synaptics_rmi4_report_touch() with the appropriate
  * function handler for each function with valid data inputs.
  */
-static void synaptics_rmi4_sensor_report(struct synaptics_rmi4_data *rmi4_data, const ktime_t timestamp
-/*		,bool report*/)
+static void synaptics_rmi4_sensor_report(struct synaptics_rmi4_data *rmi4_data, bool report, const ktime_t timestamp)
 {
 	int retval;
 	unsigned char data[MAX_INTR_REGISTERS + 1];
-	unsigned char *intr = &data[1];
 	struct synaptics_rmi4_f01_device_status status;
+	unsigned char *intr = &data[1];
 	struct synaptics_rmi4_fn *fhandler;
 	struct synaptics_rmi4_exp_fn *exp_fhandler;
 	struct synaptics_rmi4_device_info *rmi;
@@ -2498,17 +2497,10 @@ static void synaptics_rmi4_sensor_report(struct synaptics_rmi4_data *rmi4_data, 
 					"%s: Failed to reinit device\n",
 					__func__);
 		}
-		retval = synaptics_rmi4_int_enable(rmi4_data, true);
-		if (retval < 0)
-			dev_err(&rmi4_data->i2c_client->dev,
-					"%s: Failed to enable interrupts\n",
-					__func__);
-
 	}
 
-/*	if (!report)
-		return;
-*/
+	if(!report) return;
+
 	/*
 	 * Traverse the function handler list and service the source(s)
 	 * of the interrupt accordingly.
@@ -2557,7 +2549,7 @@ static irqreturn_t synaptics_rmi4_irq(int irq, void *data)
 	struct synaptics_rmi4_data *rmi4_data = data;
 	ktime_t timestamp = ktime_get();
 
-	synaptics_rmi4_sensor_report(rmi4_data, timestamp/*, true*/);
+	synaptics_rmi4_sensor_report(rmi4_data, true, timestamp);
 
 	return IRQ_HANDLED;
 }
@@ -2578,7 +2570,6 @@ static int synaptics_rmi4_irq_enable(struct synaptics_rmi4_data *rmi4_data,
 	int retval = 0;
 	const struct synaptics_dsx_platform_data *platform_data =
 		rmi4_data->i2c_client->dev.platform_data;
-	ktime_t timestamp;
 
 	if (enable) {
 		if (rmi4_data->irq_enabled)
@@ -2589,8 +2580,7 @@ static int synaptics_rmi4_irq_enable(struct synaptics_rmi4_data *rmi4_data,
 			return retval;
 
 		/* Process and clear interrupts */
-		timestamp = ktime_get();
-		synaptics_rmi4_sensor_report(rmi4_data, timestamp/*, false*/);
+		synaptics_rmi4_sensor_report(rmi4_data, false, (ktime_t)((s64)0));
 		retval = request_threaded_irq(rmi4_data->irq, NULL,
 				synaptics_rmi4_irq, platform_data->irq_flags,
 				DRIVER_NAME, rmi4_data);
@@ -4108,15 +4098,22 @@ static int synaptics_rmi4_reinit_device(struct synaptics_rmi4_data *rmi4_data)
 
 	synaptics_rmi4_free_fingers(rmi4_data);
 
-	synaptics_rmi4_set_configured(rmi4_data);
-
 	if (atomic_read(&rmi4_data->syna_use_gesture)) {
 		synaptics_set_f12ctrl_data(rmi4_data, true, 0);
 	}
 
-	retval = synaptics_rmi4_i2c_write(rmi4_data, F54_CMD_BASE_ADDR,
+	retval = synaptics_rmi4_int_enable(rmi4_data, true);
+	if (retval < 0)
+		goto exit;
+
+	synaptics_rmi4_i2c_write(rmi4_data, F54_CMD_BASE_ADDR,
 			(unsigned char*) &tmp, 1);
 
+	synaptics_rmi4_set_configured(rmi4_data);
+
+	retval = 0;
+
+exit:
 	mutex_unlock(&(rmi4_data->rmi4_reset_mutex));
 	return retval;
 }
@@ -4477,6 +4474,7 @@ static void synaptics_rmi4_init_work(struct work_struct *work)
 			container_of(work, struct synaptics_rmi4_data, init_work);
 	int retval;
 	unsigned char val = 1;
+	unsigned char tmp = 4;
 
 	if (rmi4_data->smartcover_enable)
 		synaptics_rmi4_open_smartcover();
@@ -4503,18 +4501,20 @@ static void synaptics_rmi4_init_work(struct work_struct *work)
 
 	synaptics_rmi4_sensor_wake(rmi4_data);
 	synaptics_rmi4_irq_enable(rmi4_data, true);
-	rmi4_data->touch_stopped = false;
-	retval = synaptics_rmi4_reinit_device(rmi4_data);
+/*	retval = synaptics_rmi4_reinit_device(rmi4_data);
 	if (retval < 0) {
 		dev_err(&rmi4_data->i2c_client->dev,
 				"%s: Failed to reinit device\n",
 				__func__);
 	}
+*/
+	retval = synaptics_rmi4_i2c_write(rmi4_data, F54_CMD_BASE_ADDR,
+		(unsigned char*) &tmp, 1);
 
 out:
-    mutex_lock(&suspended_mutex);
-    rmi4_data->suspended = false;
-    mutex_unlock(&suspended_mutex);
+    	mutex_lock(&suspended_mutex);
+    	rmi4_data->suspended = false;
+    	mutex_unlock(&suspended_mutex);
 }
 
 /**
