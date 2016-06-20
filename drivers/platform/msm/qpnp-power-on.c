@@ -24,6 +24,14 @@
 #include <linux/log2.h>
 #include <linux/qpnp/power-on.h>
 
+#define PMIC_VER_8941           0x01
+#define PMIC_VERSION_REG        0x0105
+#define PMIC_VERSION_REV4_REG   0x0103
+
+#define PMIC8941_V1_REV4	0x01
+#define PMIC8941_V2_REV4	0x02
+#define PON_REV2_VALUE		0x00
+
 /* Common PNP defines */
 #define QPNP_PON_REVISION2(base)		(base + 0x01)
 
@@ -94,7 +102,6 @@
 #define QPNP_PON_MAX_DBC_US			(USEC_PER_SEC * 2)
 
 #define QPNP_KEY_STATUS_DELAY			msecs_to_jiffies(250)
-#define QPNP_PON_REV_B				0x01
 
 #define QPNP_PON_BUFFER_SIZE			9
 
@@ -283,7 +290,7 @@ int qpnp_pon_system_pwr_off(enum pon_power_off_type type)
 		return rc;
 	}
 
-	if (reg == 0x00)
+	if (reg == PON_REV2_VALUE)
 		rst_en_reg = QPNP_PON_PS_HOLD_RST_CTL(pon->base);
 	else
 		rst_en_reg = QPNP_PON_PS_HOLD_RST_CTL2(pon->base);
@@ -900,6 +907,8 @@ static int qpnp_pon_config_init(struct qpnp_pon *pon)
 	struct device_node *pp = NULL;
 	struct qpnp_pon_config *cfg;
 	u8 pon_ver;
+	u8 pmic_type;
+	u8 revid_rev4;
 
 	/* Check if it is rev B */
 	rc = spmi_ext_register_readl(pon->spmi->ctrl, pon->spmi->sid,
@@ -952,14 +961,19 @@ static int qpnp_pon_config_init(struct qpnp_pon *pon)
 				}
 			}
 
-			if (pon_ver == QPNP_PON_REV_B) {
+			/* If the value read from REVISION2 register is 0x00,
+			 * then there is a single register to control s2 reset.
+			 * Otherwise there are separate registers for s2 reset
+			 * type and s2 reset enable
+			 */
+			if (pon_ver == PON_REV2_VALUE) {
+				cfg->s2_cntl_addr = cfg->s2_cntl2_addr =
+					QPNP_PON_KPDPWR_S2_CNTL(pon->base);
+			} else {
 				cfg->s2_cntl_addr =
 					QPNP_PON_KPDPWR_S2_CNTL(pon->base);
 				cfg->s2_cntl2_addr =
 					QPNP_PON_KPDPWR_S2_CNTL2(pon->base);
-			} else {
-				cfg->s2_cntl_addr = cfg->s2_cntl2_addr =
-					QPNP_PON_KPDPWR_S2_CNTL(pon->base);
 			}
 
 			break;
@@ -982,6 +996,38 @@ static int qpnp_pon_config_init(struct qpnp_pon *pon)
 
 			cfg->use_bark = of_property_read_bool(pp,
 							"qcom,use-bark");
+
+			rc = spmi_ext_register_readl(pon->spmi->ctrl,
+					pon->spmi->sid, PMIC_VERSION_REG,
+						&pmic_type, 1);
+
+			if (rc) {
+				dev_err(&pon->spmi->dev,
+				"Unable to read PMIC type\n");
+				return rc;
+			}
+
+			if (pmic_type == PMIC_VER_8941) {
+
+				rc = spmi_ext_register_readl(pon->spmi->ctrl,
+					pon->spmi->sid, PMIC_VERSION_REV4_REG,
+							&revid_rev4, 1);
+
+				if (rc) {
+					dev_err(&pon->spmi->dev,
+					"Unable to read PMIC revision ID\n");
+					return rc;
+				}
+
+				/*PM8941 V3 does not have harware bug. Hence
+				bark is not required from PMIC versions 3.0*/
+				if (!(revid_rev4 == PMIC8941_V1_REV4 ||
+					revid_rev4 == PMIC8941_V2_REV4)) {
+					cfg->support_reset = false;
+					cfg->use_bark = false;
+				}
+			}
+
 			if (cfg->use_bark) {
 				cfg->bark_irq = spmi_get_irq_byname(pon->spmi,
 							NULL, "resin-bark");
@@ -992,14 +1038,14 @@ static int qpnp_pon_config_init(struct qpnp_pon *pon)
 				}
 			}
 
-			if (pon_ver == QPNP_PON_REV_B) {
+			if (pon_ver == PON_REV2_VALUE) {
+				cfg->s2_cntl_addr = cfg->s2_cntl2_addr =
+					QPNP_PON_RESIN_S2_CNTL(pon->base);
+			} else {
 				cfg->s2_cntl_addr =
 					QPNP_PON_RESIN_S2_CNTL(pon->base);
 				cfg->s2_cntl2_addr =
 					QPNP_PON_RESIN_S2_CNTL2(pon->base);
-			} else {
-				cfg->s2_cntl_addr = cfg->s2_cntl2_addr =
-					QPNP_PON_RESIN_S2_CNTL(pon->base);
 			}
 
 			break;
@@ -1033,14 +1079,14 @@ static int qpnp_pon_config_init(struct qpnp_pon *pon)
 				}
 			}
 
-			if (pon_ver == QPNP_PON_REV_B) {
+			if (pon_ver == PON_REV2_VALUE) {
+				cfg->s2_cntl_addr = cfg->s2_cntl2_addr =
+				QPNP_PON_KPDPWR_RESIN_S2_CNTL(pon->base);
+			} else {
 				cfg->s2_cntl_addr =
 				QPNP_PON_KPDPWR_RESIN_S2_CNTL(pon->base);
 				cfg->s2_cntl2_addr =
 				QPNP_PON_KPDPWR_RESIN_S2_CNTL2(pon->base);
-			} else {
-				cfg->s2_cntl_addr = cfg->s2_cntl2_addr =
-				QPNP_PON_KPDPWR_RESIN_S2_CNTL(pon->base);
 			}
 
 			break;
