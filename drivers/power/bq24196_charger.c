@@ -5,6 +5,7 @@
 #include <linux/of.h>
 #include <linux/of_device.h>
 #include <linux/delay.h>
+#include <linux/wait.h>
 #include <linux/gpio.h>
 #include <linux/i2c.h>
 #include <linux/input.h>
@@ -51,6 +52,7 @@ struct bq24196_device_info {
 	struct task_struct		*feedwdt_task;
 	struct mutex			i2c_lock;
 	atomic_t suspended; //sjc1118
+	wait_queue_head_t wait_for_resume;
 
 	/* 300ms delay is needed after bq27541 is powered up
 	 * and before any successful I2C transaction
@@ -81,10 +83,10 @@ static int bq24196_write_i2c(struct bq24196_device_info *di,u8 reg,u8 length,cha
 {
 	struct i2c_client *client = di->client;
 	int retval;
-
+	
 	if (atomic_read(&di->suspended) == 1) //sjc1118
 		return -1;
-	
+
 	mutex_lock(&bq24196_di->i2c_lock);
 	retval = i2c_smbus_write_i2c_block_data(client,reg,length,&buf[0]);
 	mutex_unlock(&bq24196_di->i2c_lock);
@@ -370,12 +372,8 @@ bq24196_get_charge_en(struct bq24196_device_info *di)
 	int rc;
 		
 	rc = bq24196_read(di,POWER_ON_CONF,1,&value_buf);
-	if(rc < 0) {
-		if(atomic_read(&di->suspended) != 1)
-			pr_err("read charge en status fail\n");
-
+	if(rc < 0)
 		return 0;
-	}
 	if((value_buf & 0x30) == 0x0)//disable charge
 		return 0;
 	else if((value_buf & 0x30) == 0x10) //enable charge
@@ -403,12 +401,8 @@ static int bq24196_get_system_status(struct bq24196_device_info *di)
 	int rc;
 		
 	rc = bq24196_read(di,SYS_STS,1,&value_buf);
-	if(rc < 0) {
-		if(atomic_read(&di->suspended) != 1)
-			pr_err("read system status fail\n");
-
+	if(rc < 0)
 		return 0;
-	}
 	return value_buf;
 }
 
@@ -559,6 +553,7 @@ static int bq24196_probe(struct i2c_client *client, const struct i2c_device_id *
 	bq24196_client = client;
 	bq24196_di = di;
 	atomic_set(&di->suspended, 0); //sjc1118
+	init_waitqueue_head(&di->wait_for_resume);
 	mutex_init(&di->i2c_lock);
 	bq24196_hw_config_init(di);
 	
@@ -603,11 +598,18 @@ static int bq24196_suspend(struct device *dev) //sjc1118
 	return 0;
 }
 
+void bq24196_wait_for_resume(void)
+{
+	wait_event_interruptible_timeout(bq24196_di->wait_for_resume,
+	(atomic_read(&bq24196_di->suspended) == 0), msecs_to_jiffies(2000));
+}
+
 static int bq24196_resume(struct device *dev) //sjc1118
 {
 	struct bq24196_device_info *chip = dev_get_drvdata(dev);
 
 	atomic_set(&chip->suspended, 0);
+	wake_up(&chip->wait_for_resume);
 
 	return 0;
 }
