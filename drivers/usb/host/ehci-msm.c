@@ -1,6 +1,6 @@
 /* ehci-msm.c - HSUSB Host Controller Driver Implementation
  *
- * Copyright (c) 2008-2013, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2008-2014, The Linux Foundation. All rights reserved.
  *
  * Partly derived from ehci-fsl.c and ehci-hcd.c
  * Copyright (c) 2000-2004 by David Brownell
@@ -54,6 +54,7 @@ static int ehci_msm_reset(struct usb_hcd *hcd)
 
 	ehci->caps = USB_CAPLENGTH;
 	hcd->has_tt = 1;
+	ehci->no_testmode_suspend = true;
 
 	retval = ehci_setup(hcd);
 	if (retval)
@@ -197,8 +198,21 @@ static int ehci_msm_runtime_suspend(struct device *dev)
 
 static int ehci_msm_runtime_resume(struct device *dev)
 {
+	struct usb_hcd *hcd = dev_get_drvdata(dev);
+	int ret;
+	u32 portsc;
+
 	dev_dbg(dev, "ehci runtime resume\n");
-	return usb_phy_set_suspend(phy, 0);
+	ret = usb_phy_set_suspend(phy, 0);
+	if (ret)
+		return ret;
+
+	portsc = readl_relaxed(USB_PORTSC);
+	portsc &= ~PORT_RWC_BITS;
+	portsc |= PORT_RESUME;
+	writel_relaxed(portsc, USB_PORTSC);
+
+	return ret;
 }
 #endif
 
@@ -206,17 +220,11 @@ static int ehci_msm_runtime_resume(struct device *dev)
 static int ehci_msm_pm_suspend(struct device *dev)
 {
 	struct usb_hcd *hcd = dev_get_drvdata(dev);
-	bool do_wakeup = device_may_wakeup(dev);
-	int ret;
 
 	dev_dbg(dev, "ehci-msm PM suspend\n");
 
 	if (!hcd->rh_registered)
 		return 0;
-
-	ret = ehci_suspend(hcd, do_wakeup);
-	if (ret)
-		return ret;
 
 	return usb_phy_set_suspend(phy, 1);
 }
@@ -225,6 +233,7 @@ static int ehci_msm_pm_resume(struct device *dev)
 {
 	struct usb_hcd *hcd = dev_get_drvdata(dev);
 	int ret;
+	u32 portsc;
 
 	dev_dbg(dev, "ehci-msm PM resume\n");
 	if (!hcd->rh_registered)
@@ -236,6 +245,10 @@ static int ehci_msm_pm_resume(struct device *dev)
 		return ret;
 
 	ehci_resume(hcd, false);
+	portsc = readl_relaxed(USB_PORTSC);
+	portsc &= ~PORT_RWC_BITS;
+	portsc |= PORT_RESUME;
+	writel_relaxed(portsc, USB_PORTSC);
 	/* Resume root-hub to handle USB event if any else initiate LPM again */
 	usb_hcd_resume_root_hub(hcd);
 
