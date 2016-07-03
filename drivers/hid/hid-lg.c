@@ -345,14 +345,14 @@ static __u8 *lg_report_fixup(struct hid_device *hdev, __u8 *rdesc,
 	struct usb_device_descriptor *udesc;
 	__u16 bcdDevice, rev_maj, rev_min;
 
-	if ((drv_data->quirks & LG_RDESC) && *rsize >= 90 && rdesc[83] == 0x26 &&
+	if ((drv_data->quirks & LG_RDESC) && *rsize >= 91 && rdesc[83] == 0x26 &&
 			rdesc[84] == 0x8c && rdesc[85] == 0x02) {
 		hid_info(hdev,
 			 "fixing up Logitech keyboard report descriptor\n");
 		rdesc[84] = rdesc[89] = 0x4d;
 		rdesc[85] = rdesc[90] = 0x10;
 	}
-	if ((drv_data->quirks & LG_RDESC_REL_ABS) && *rsize >= 50 &&
+	if ((drv_data->quirks & LG_RDESC_REL_ABS) && *rsize >= 51 &&
 			rdesc[32] == 0x81 && rdesc[33] == 0x06 &&
 			rdesc[49] == 0x81 && rdesc[50] == 0x06) {
 		hid_info(hdev,
@@ -698,7 +698,8 @@ static int lg_probe(struct hid_device *hdev, const struct hid_device_id *id)
 			/* insert a little delay of 10 jiffies ~ 40ms */
 			wait_queue_head_t wait;
 			init_waitqueue_head (&wait);
-			wait_event_interruptible_timeout(wait, 0, 10);
+			wait_event_interruptible_timeout(wait, 0,
+							 msecs_to_jiffies(40));
 
 			/* Select random Address */
 			buf[1] = 0xB2;
@@ -709,13 +710,16 @@ static int lg_probe(struct hid_device *hdev, const struct hid_device_id *id)
 	}
 
 	if (drv_data->quirks & LG_FF)
-		lgff_init(hdev);
-	if (drv_data->quirks & LG_FF2)
-		lg2ff_init(hdev);
-	if (drv_data->quirks & LG_FF3)
-		lg3ff_init(hdev);
-	if (drv_data->quirks & LG_FF4)
-		lg4ff_init(hdev);
+		ret = lgff_init(hdev);
+	else if (drv_data->quirks & LG_FF2)
+		ret = lg2ff_init(hdev);
+	else if (drv_data->quirks & LG_FF3)
+		ret = lg3ff_init(hdev);
+	else if (drv_data->quirks & LG_FF4)
+		ret = lg4ff_init(hdev);
+
+	if (ret)
+		goto err_free;
 
 	return 0;
 err_free:
@@ -729,7 +733,8 @@ static void lg_remove(struct hid_device *hdev)
 	if (drv_data->quirks & LG_FF4)
 		lg4ff_deinit(hdev);
 
-	hid_hw_stop(hdev);
+	else
+		hid_hw_stop(hdev);
 	kfree(drv_data);
 }
 
@@ -758,6 +763,8 @@ static const struct hid_device_id lg_devices[] = {
 
 	{ HID_USB_DEVICE(USB_VENDOR_ID_LOGITECH, USB_DEVICE_ID_LOGITECH_EXTREME_3D),
 		.driver_data = LG_NOGET },
+	{ HID_USB_DEVICE(USB_VENDOR_ID_LOGITECH, USB_DEVICE_ID_LOGITECH_DUAL_ACTION),
+		.driver_data = LG_NOGET },
 	{ HID_USB_DEVICE(USB_VENDOR_ID_LOGITECH, USB_DEVICE_ID_LOGITECH_WHEEL),
 		.driver_data = LG_NOGET | LG_FF4 },
 
@@ -767,6 +774,8 @@ static const struct hid_device_id lg_devices[] = {
 		.driver_data = LG_FF },
 	{ HID_USB_DEVICE(USB_VENDOR_ID_LOGITECH, USB_DEVICE_ID_LOGITECH_RUMBLEPAD2_2),
 		.driver_data = LG_FF },
+	{ HID_USB_DEVICE(USB_VENDOR_ID_LOGITECH, USB_DEVICE_ID_LOGITECH_G29_WHEEL),
+		.driver_data = LG_FF4 },
 	{ HID_USB_DEVICE(USB_VENDOR_ID_LOGITECH, USB_DEVICE_ID_LOGITECH_WINGMAN_F3D),
 		.driver_data = LG_FF },
 	{ HID_USB_DEVICE(USB_VENDOR_ID_LOGITECH, USB_DEVICE_ID_LOGITECH_FORCE3D_PRO),
